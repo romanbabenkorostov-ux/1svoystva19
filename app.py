@@ -64,10 +64,29 @@ PARAMS = [
 action_names = ['Растения', 'Загрязнение', 'Биочар', 'Нитрификаторы', 'ПАУ-деструкторы']
 combos = list(itertools.product([0, 1], repeat=5))
 
+# === Проверка размерности модели ===
+try:
+    test_X = np.array([[0, 0, 0, 0, 0]])
+    test_pred = model.predict(test_X)[0]
+    n_outputs = len(test_pred)
+    print(f"[DEBUG] Модель предсказывает {n_outputs} параметров")
+    print(f"[DEBUG] В списке PARAMS: {len(PARAMS)} параметров")
+    
+    if n_outputs != len(PARAMS):
+        print(f"[WARNING] Несоответствие! Модель выдаёт {n_outputs}, ожидается {len(PARAMS)}")
+        print(f"[INFO] Используем только первые {n_outputs} параметров")
+        PARAMS = PARAMS[:n_outputs]
+        print(f"[INFO] Актуальные параметры: {PARAMS}")
+except Exception as e:
+    print(f"[ERROR] Не удалось проверить модель: {e}")
+    raise
+
 # === Предсказание ===
 def predict(combo):
     X = np.array([combo])
     pred = model.predict(X)[0]
+    if len(pred) != len(PARAMS):
+        raise ValueError(f"Модель вернула {len(pred)} значений, ожидается {len(PARAMS)}")
     return {param: round(float(pred[i]), 3) for i, param in enumerate(PARAMS)}
 
 # === Все варианты (32) ===

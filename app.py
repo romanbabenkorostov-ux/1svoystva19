@@ -121,21 +121,47 @@ def get_all_variants():
 def filter_variants(variants, param, target, tol=0.2):
     return [v for v in variants if abs(v[1][param] - target) <= tol * max(1, abs(target))]
 
-# === ВЫВОД ТОП-3 ===
+# === ВЫВОД ТОП-3 С ТАБЛИЦЕЙ СРАВНЕНИЯ ===
 def show_top3(variants, targets, is_streamlit=False):
     top3 = sorted(variants, key=lambda x: sum(abs(x[1].get(p, 0) - targets.get(p, x[1].get(p, 0))) for p in targets))[:3]
     for i, (c, p) in enumerate(top3, 1):
         acts = " | ".join(f"{k}: {'да' if v else 'нет'}" for k, v in zip(ACTION_NAMES, c))
         if is_streamlit:
             st.write(f"**Вариант #{i}:** {acts}")
-            table = [[param, f"{p[param]:.3f}", f"→{targets.get(param, ''):.3f}" if targets.get(param) else ""] for param in PARAMS]
-            st.table(table)
+            
+            # Создаём таблицу с целевыми значениями
+            table_data = []
+            for param in PARAMS:
+                row = [param, f"{p[param]:.3f}"]
+                if param in targets:
+                    row.append(f"{targets[param]:.3f}")
+                    diff = abs(p[param] - targets[param])
+                    row.append(f"{diff:.3f}")
+                else:
+                    row.append("—")
+                    row.append("—")
+                table_data.append(row)
+            
+            import pandas as pd
+            df = pd.DataFrame(table_data, columns=["Показатель", "Расчётное", "Целевое", "Отклонение"])
+            st.dataframe(df, use_container_width=True)
         else:
             print(f"\n# {i}: {acts}")
-            table = [[param, f"{p[param]:.3f}", f"→{targets.get(param, ''):.3f}" if targets.get(param) else ""] for param in PARAMS]
-            print(tabulate(table, headers=["Показатель", "Значение", "Цель"], tablefmt="grid"))
+            table = []
+            for param in PARAMS:
+                row = [param, f"{p[param]:.3f}"]
+                if param in targets:
+                    row.append(f"{targets[param]:.3f}")
+                    diff = abs(p[param] - targets[param])
+                    row.append(f"{diff:.3f}")
+                else:
+                    row.append("—")
+                    row.append("—")
+                table.append(row)
+            
+            print(tabulate(table, headers=["Показатель", "Расчётное", "Целевое", "Отклонение"], tablefmt="grid"))
             log_print(f"\n# {i}: {acts}")
-            log_print(tabulate(table, headers=["Показатель", "Значение", "Цель"], tablefmt="grid"))
+            log_print(tabulate(table, headers=["Показатель", "Расчётное", "Целевое", "Отклонение"], tablefmt="grid"))
 
 # === ПРОГНОЗ ПО ДЕЙСТВИЯМ ===
 def predict_by_actions(actions: Dict[str, int]) -> Dict[str, float]:
@@ -295,9 +321,31 @@ def mode_recommend():
             input_key = f"target_input_{param.replace(' ', '_').replace('.', '_')}_{len(current)}"
             target = st.number_input(f"Цель для **{param}**:", value=ranges[param][0], step=0.1, format="%.3f", key=input_key)
             
+            # Две кнопки: Применить и Рассчитать на текущих данных
+            col1, col2 = st.columns(2)
             button_key = f"apply_btn_{len(remaining)}_{len(current)}"
-            if not st.button("Применить", type="primary", key=button_key):
-                st.stop()  # Используем st.stop() вместо continue
+            calc_key = f"calc_btn_{len(remaining)}_{len(current)}"
+            
+            with col1:
+                apply_clicked = st.button("➕ Применить и продолжить", type="primary", key=button_key)
+            with col2:
+                calc_clicked = st.button("✅ Рассчитать на этих данных", type="secondary", key=calc_key, disabled=(len(targets) == 0))
+            
+            if calc_clicked and targets:
+                # Завершаем ввод и показываем результат
+                show_top3(current, targets, is_streamlit=True)
+                
+                # Кнопка сброса
+                if st.button("🔄 Сбросить и начать заново", type="secondary"):
+                    st.session_state.variants = get_all_variants()
+                    st.session_state.current = st.session_state.variants.copy()
+                    st.session_state.targets = {}
+                    st.session_state.remaining = PARAMS.copy()
+                    st.rerun()
+                st.stop()
+            
+            if not apply_clicked:
+                st.stop()
 
         # Применение
         targets[param] = target
@@ -306,6 +354,14 @@ def mode_recommend():
             msg = "⚠️ НЕВОЗМОЖНО! Нет подходящих вариантов."
             if IN_STREAMLIT:
                 st.error(msg)
+                # Кнопка сброса при ошибке
+                if st.button("🔄 Сбросить и начать заново", type="primary"):
+                    st.session_state.variants = get_all_variants()
+                    st.session_state.current = st.session_state.variants.copy()
+                    st.session_state.targets = {}
+                    st.session_state.remaining = PARAMS.copy()
+                    st.rerun()
+                st.stop()
             else:
                 print(msg)
                 log_print(msg)
@@ -325,21 +381,46 @@ def mode_recommend():
     if current and not remaining:
         best = min(current, key=lambda x: sum(abs(x[1].get(p, 0) - targets.get(p, x[1].get(p, 0))) for p in targets))
         acts = " | ".join(f"{k}: {'да' if v else 'нет'}" for k, v in zip(ACTION_NAMES, best[0]))
-        msg = "\nФИНАЛЬНАЯ РЕКОМЕНДАЦИЯ:\n" + acts
-        for k, v in best[1].items():
-            msg += f"\n  {k}: {v:.3f}"
+        
         if IN_STREAMLIT:
             st.success("✅ ФИНАЛЬНАЯ РЕКОМЕНДАЦИЯ:")
-            st.write(acts)
-            for k, v in best[1].items():
-                st.write(f"  **{k}:** {v:.3f}")
+            st.write(f"**Действия:** {acts}")
+            
+            # Итоговая таблица со всеми параметрами
+            st.subheader("Итоговая таблица параметров")
+            table_data = []
+            for param in PARAMS:
+                row = [param, f"{best[1][param]:.3f}"]
+                if param in targets:
+                    row.append(f"{targets[param]:.3f}")
+                    diff = abs(best[1][param] - targets[param])
+                    row.append(f"{diff:.3f}")
+                else:
+                    row.append("—")
+                    row.append("—")
+                table_data.append(row)
+            
+            import pandas as pd
+            df = pd.DataFrame(table_data, columns=["Показатель", "Расчётное", "Целевое", "Отклонение"])
+            st.dataframe(df, use_container_width=True)
+            
+            # Кнопка сброса
+            if st.button("🔄 Сбросить и начать заново", type="secondary"):
+                st.session_state.variants = get_all_variants()
+                st.session_state.current = st.session_state.variants.copy()
+                st.session_state.targets = {}
+                st.session_state.remaining = PARAMS.copy()
+                st.rerun()
         else:
+            msg = "\nФИНАЛЬНАЯ РЕКОМЕНДАЦИЯ:\n" + acts
+            for k, v in best[1].items():
+                msg += f"\n  {k}: {v:.3f}"
             print(msg)
             log_print(msg)
 
 # === КОНСОЛЬНЫЙ РЕЖИМ ===
 def run_console():
-    print("УНИВЕРСАЛЬНЫЙ ПОМОЩНИК ПОЧВЫ")
+    print("Моделирование свойств почв по реакции на агротехнические и биотехнологические воздействия")
     print("="*50)
     print("[1] Прогноз по действиям")
     print("[2] Рекомендация по целям")
@@ -364,9 +445,9 @@ def run_console():
 
 # === STREAMLIT РЕЖИМ ===
 def run_streamlit():
-    st.set_page_config(page_title="Почвенный помощник", layout="wide", page_icon="🌱")
+    st.set_page_config(page_title="Моделирование свойств почв", layout="wide", page_icon="🌱")
     
-    st.title("🌱 УНИВЕРСАЛЬНЫЙ ПОМОЩНИК ПОЧВЫ")
+    st.title("🌱 Моделирование свойств почв по реакции на агротехнические и биотехнологические воздействия")
     
     # Проверка наличия модели
     try:

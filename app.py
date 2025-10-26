@@ -1,6 +1,7 @@
 # src/app19.py
-# УНИВЕРСАЛЬНЫЙ ПОМОЩНИК ПОЧВЫ
-# Режимы 1 и 2 — работают в консоли и в Streamlit
+# Универсальный помощник: консоль + Streamlit
+# Статус-бар для веб (прогресс + спиннер)
+# Режимы 1 и 2 — работают везде
 # Лог — только локально
 
 import streamlit as st
@@ -13,6 +14,7 @@ from typing import List, Tuple, Dict
 from datetime import datetime
 from io import StringIO
 import sys
+import time  # для задержек в прогрессе (опционально)
 
 # === ОПРЕДЕЛЕНИЕ РЕЖИМА ===
 IN_STREAMLIT = hasattr(st, "_is_running_with_streamlit") and st._is_running_with_streamlit
@@ -60,16 +62,30 @@ def find_model() -> str:
             return path
     raise FileNotFoundError("Модель не найдена! Запустите: python src/10_predict_soil_19.py")
 
-# === ГЕНЕРАЦИЯ 32 ВАРИАНТОВ ===
-def get_all_variants() -> List[Tuple[Tuple[int, ...], Dict[str, float]]]:
+# === ГЕНЕРАЦИЯ 32 ВАРИАНТОВ (с прогрессом для веба) ===
+def get_all_variants():
     model = joblib.load(find_model())
     combos = list(itertools.product([0, 1], repeat=5))
     variants = []
-    for combo in combos:
-        X = np.array([combo])
-        pred = model.predict(X)[0]
-        pred_dict = {param: round(pred[i], 3) for i, param in enumerate(PARAMS)}
-        variants.append((combo, pred_dict))
+    if IN_STREAMLIT:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.text("Генерируем варианты...")
+        for i, combo in enumerate(combos):
+            X = np.array([combo])
+            pred = model.predict(X)[0]
+            pred_dict = {param: round(pred[j], 3) for j, param in enumerate(PARAMS)}
+            variants.append((combo, pred_dict))
+            progress_bar.progress((i + 1) / len(combos))
+            status_text.text(f"Готово: {i + 1}/{len(combos)} вариантов")
+        progress_bar.empty()
+        status_text.empty()
+    else:
+        for combo in combos:
+            X = np.array([combo])
+            pred = model.predict(X)[0]
+            pred_dict = {param: round(pred[j], 3) for j, param in enumerate(PARAMS)}
+            variants.append((combo, pred_dict))
     return variants
 
 # === ФИЛЬТРАЦИЯ ===
@@ -200,22 +216,26 @@ def mode_recommend():
             choice = log_input("\nНомер (Enter — конец): ").strip()
             if not choice:
                 print("Выход.")
+                log_print("Выход.")
                 break
             try:
                 idx = int(choice) - 1
                 param = remaining[idx]
             except:
                 print("Ошибка ввода!")
+                log_print("Ошибка ввода!")
                 continue
 
             val = log_input(f"Цель {param}: ").strip()
             if not val:
                 print("Пропущено.")
+                log_print("Пропущено.")
                 continue
             try:
                 target = float(val)
             except:
                 print("Неверное число!")
+                log_print("Неверное число!")
                 continue
 
         else:
@@ -238,6 +258,7 @@ def mode_recommend():
                 st.error(msg)
             else:
                 print(msg)
+                log_print(msg)
             break
         remaining.pop(idx)
 
@@ -280,6 +301,7 @@ def run_console():
         mode_recommend()
     else:
         print("Неверный выбор.")
+        log_print("Неверный выбор.")
 
     # === СОХРАНЕНИЕ ЛОГА ===
     if IS_LOCAL and log_buffer:

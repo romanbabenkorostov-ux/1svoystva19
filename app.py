@@ -284,12 +284,20 @@ def mode_recommend():
             st.write(f"**Осталось вариантов:** {len(current)} | **Параметров:** {len(remaining)}")
             ranges = {p: (min(v[1][p] for v in current), max(v[1][p] for v in current)) for p in remaining}
             options = [f"{i+1}. {p} → [{ranges[p][0]:.2f}–{ranges[p][1]:.2f}]" for i, p in enumerate(remaining)]
-            choice = st.selectbox("Выберите параметр:", options, key="param_select")
+            
+            # Уникальный ключ на основе оставшихся параметров
+            select_key = f"param_select_{len(remaining)}_{hash(tuple(remaining))}"
+            choice = st.selectbox("Выберите параметр:", options, key=select_key)
             idx = int(choice.split('.')[0]) - 1
             param = remaining[idx]
-            target = st.number_input(f"Цель для **{param}**:", value=ranges[param][0], step=0.1, format="%.3f")
-            if not st.button("Применить", type="primary"):
-                continue
+            
+            # Уникальный ключ для каждого параметра
+            input_key = f"target_input_{param.replace(' ', '_').replace('.', '_')}_{len(current)}"
+            target = st.number_input(f"Цель для **{param}**:", value=ranges[param][0], step=0.1, format="%.3f", key=input_key)
+            
+            button_key = f"apply_btn_{len(remaining)}_{len(current)}"
+            if not st.button("Применить", type="primary", key=button_key):
+                st.stop()  # Используем st.stop() вместо continue
 
         # Применение
         targets[param] = target

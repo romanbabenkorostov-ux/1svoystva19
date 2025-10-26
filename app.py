@@ -1,8 +1,6 @@
 # src/app19.py
 # Универсальный помощник: консоль + Streamlit
-# Статус-бар для веб (прогресс + спиннер)
-# Режимы 1 и 2 — работают везде
-# Лог — только локально
+# ИСПРАВЛЕННАЯ ВЕРСИЯ с обработкой ошибок
 
 import streamlit as st
 import joblib
@@ -14,13 +12,18 @@ from typing import List, Tuple, Dict
 from datetime import datetime
 from io import StringIO
 import sys
-import time  # для задержек в прогрессе (опционально)
+import time
 
-# === ОПРЕДЕЛЕНИЕ РЕЖИМА ===
-IN_STREAMLIT = hasattr(st, "_is_running_with_streamlit") and st._is_running_with_streamlit
+# === ОПРЕДЕЛЕНИЕ РЕЖИМА (ИСПРАВЛЕНО) ===
+try:
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+    IN_STREAMLIT = get_script_run_ctx() is not None
+except:
+    IN_STREAMLIT = False
+
 IS_LOCAL = not IN_STREAMLIT
 
-# === ЛОГИРОВАНИЕ (только локально) ===
+# === ЛОГИРОВАНИЕ ===
 log_buffer = StringIO() if IS_LOCAL else None
 
 def log_print(*args, **kwargs):
@@ -50,27 +53,51 @@ PARAMS = [
 
 ACTION_NAMES = ['Растения', 'Загрязнение', 'Биочар', 'Нитрификаторы', 'ПАУ-деструкторы']
 
-# === Поиск модели ===
+# === Поиск модели (С ОБРАБОТКОЙ ОШИБОК) ===
 def find_model() -> str:
     candidates = [
-        os.path.join(os.path.dirname(__file__), '..', 'models', 'soil_predictor_19.pkl'),
+        'soil_predictor_19.pkl',  # В корне репозитория
         'models/soil_predictor_19.pkl',
+        os.path.join(os.path.dirname(__file__), '..', 'models', 'soil_predictor_19.pkl'),
         '../models/soil_predictor_19.pkl'
     ]
     for path in candidates:
         if os.path.exists(path):
             return path
-    raise FileNotFoundError("Модель не найдена! Запустите: python src/10_predict_soil_19.py")
+    
+    # Если модель не найдена
+    error_msg = """
+    ⚠️ ОШИБКА: Модель не найдена!
+    
+    Проверьте:
+    1. Файл soil_predictor_19.pkl загружен в репозиторий
+    2. Путь к модели правильный
+    3. Файл присутствует в папке models/
+    
+    Искал в: {}
+    """.format('\n    '.join(candidates))
+    
+    raise FileNotFoundError(error_msg)
 
-# === ГЕНЕРАЦИЯ 32 ВАРИАНТОВ (с прогрессом для веба) ===
+# === ГЕНЕРАЦИЯ 32 ВАРИАНТОВ (с обработкой ошибок) ===
 def get_all_variants():
-    model = joblib.load(find_model())
+    try:
+        model = joblib.load(find_model())
+    except Exception as e:
+        if IN_STREAMLIT:
+            st.error(f"❌ Ошибка загрузки модели: {e}")
+            st.stop()
+        else:
+            raise
+    
     combos = list(itertools.product([0, 1], repeat=5))
     variants = []
+    
     if IN_STREAMLIT:
         progress_bar = st.progress(0)
         status_text = st.empty()
         status_text.text("Генерируем варианты...")
+        
         for i, combo in enumerate(combos):
             X = np.array([combo])
             pred = model.predict(X)[0]
@@ -78,6 +105,7 @@ def get_all_variants():
             variants.append((combo, pred_dict))
             progress_bar.progress((i + 1) / len(combos))
             status_text.text(f"Готово: {i + 1}/{len(combos)} вариантов")
+        
         progress_bar.empty()
         status_text.empty()
     else:
@@ -86,6 +114,7 @@ def get_all_variants():
             pred = model.predict(X)[0]
             pred_dict = {param: round(pred[j], 3) for j, param in enumerate(PARAMS)}
             variants.append((combo, pred_dict))
+    
     return variants
 
 # === ФИЛЬТРАЦИЯ ===
@@ -110,7 +139,15 @@ def show_top3(variants, targets, is_streamlit=False):
 
 # === ПРОГНОЗ ПО ДЕЙСТВИЯМ ===
 def predict_by_actions(actions: Dict[str, int]) -> Dict[str, float]:
-    model = joblib.load(find_model())
+    try:
+        model = joblib.load(find_model())
+    except Exception as e:
+        if IN_STREAMLIT:
+            st.error(f"❌ Ошибка загрузки модели: {e}")
+            st.stop()
+        else:
+            raise
+    
     X = np.array([[actions.get(name, 0) for name in ACTION_NAMES]])
     pred = model.predict(X)[0]
     return {param: round(pred[i], 3) for i, param in enumerate(PARAMS)}
@@ -140,7 +177,7 @@ def show_prediction(pred: Dict[str, float], actions: Dict[str, int]):
 # === РЕЖИМ 1: ПРОГНОЗ ПО ДЕЙСТВИЯМ ===
 def mode_predict():
     if IN_STREAMLIT:
-        st.header("ПРОГНОЗ ПО ДЕЙСТВИЯМ")
+        st.header("🌱 ПРОГНОЗ ПО ДЕЙСТВИЯМ")
     else:
         print("ПРОГНОЗ ПО ДЕЙСТВИЯМ (19 показателей)")
         log_print("ПРОГНОЗ ПО ДЕЙСТВИЯМ (19 показателей)")
@@ -152,7 +189,7 @@ def mode_predict():
             with cols[i]:
                 val = st.checkbox(name, value=False)
                 actions[name] = 1 if val else 0
-        if st.button("Рассчитать"):
+        if st.button("Рассчитать", type="primary"):
             with st.spinner("Предсказание..."):
                 pred = predict_by_actions(actions)
                 show_prediction(pred, actions)
@@ -174,7 +211,7 @@ def mode_predict():
 # === РЕЖИМ 2: РЕКОМЕНДАЦИЯ ПО ЦЕЛЯМ ===
 def mode_recommend():
     if IN_STREAMLIT:
-        st.header("РЕКОМЕНДАЦИЯ ПО ЦЕЛЯМ")
+        st.header("🎯 РЕКОМЕНДАЦИЯ ПО ЦЕЛЯМ")
     else:
         print("РЕКОМЕНДАЦИЯ ПО ЦЕЛЯМ (пошагово)")
         log_print("РЕКОМЕНДАЦИЯ ПО ЦЕЛЯМ (пошагово)")
@@ -183,10 +220,15 @@ def mode_recommend():
     if IN_STREAMLIT:
         if 'variants' not in st.session_state:
             with st.spinner("Генерация 32 вариантов..."):
-                st.session_state.variants = get_all_variants()
-                st.session_state.current = st.session_state.variants.copy()
-                st.session_state.targets = {}
-                st.session_state.remaining = PARAMS.copy()
+                try:
+                    st.session_state.variants = get_all_variants()
+                    st.session_state.current = st.session_state.variants.copy()
+                    st.session_state.targets = {}
+                    st.session_state.remaining = PARAMS.copy()
+                except Exception as e:
+                    st.error(f"❌ Ошибка инициализации: {e}")
+                    st.stop()
+        
         current = st.session_state.current
         targets = st.session_state.targets
         remaining = st.session_state.remaining
@@ -246,14 +288,14 @@ def mode_recommend():
             idx = int(choice.split('.')[0]) - 1
             param = remaining[idx]
             target = st.number_input(f"Цель для **{param}**:", value=ranges[param][0], step=0.1, format="%.3f")
-            if not st.button("Применить"):
+            if not st.button("Применить", type="primary"):
                 continue
 
         # Применение
         targets[param] = target
         current = filter_variants(current, param, target)
         if not current:
-            msg = "НЕВОЗМОЖНО! Нет подходящих вариантов."
+            msg = "⚠️ НЕВОЗМОЖНО! Нет подходящих вариантов."
             if IN_STREAMLIT:
                 st.error(msg)
             else:
@@ -279,7 +321,7 @@ def mode_recommend():
         for k, v in best[1].items():
             msg += f"\n  {k}: {v:.3f}"
         if IN_STREAMLIT:
-            st.success("ФИНАЛЬНАЯ РЕКОМЕНДАЦИЯ:")
+            st.success("✅ ФИНАЛЬНАЯ РЕКОМЕНДАЦИЯ:")
             st.write(acts)
             for k, v in best[1].items():
                 st.write(f"  **{k}:** {v:.3f}")
@@ -314,8 +356,17 @@ def run_console():
 
 # === STREAMLIT РЕЖИМ ===
 def run_streamlit():
-    st.set_page_config(page_title="Почвенный помощник", layout="wide")
-    st.title("УНИВЕРСАЛЬНЫЙ ПОМОЩНИК ПОЧВЫ")
+    st.set_page_config(page_title="Почвенный помощник", layout="wide", page_icon="🌱")
+    
+    st.title("🌱 УНИВЕРСАЛЬНЫЙ ПОМОЩНИК ПОЧВЫ")
+    
+    # Проверка наличия модели
+    try:
+        find_model()
+    except FileNotFoundError as e:
+        st.error(str(e))
+        st.info("💡 **Решение:** Загрузите файл `soil_predictor_19.pkl` в репозиторий GitHub")
+        st.stop()
 
     mode = st.radio("Режим:", ["Прогноз по действиям", "Рекомендация по целям"], horizontal=True)
 
